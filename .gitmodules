@@ -1,0 +1,4 @@
+[submodule "asl-release"]
+	path = asl-release
+	url = https://github.com/Macroassembler-AS/asl-releases
+	branch = upstream

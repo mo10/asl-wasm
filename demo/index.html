@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>asl-wasm demo</title>
+<style>
+  body { font-family: sans-serif; max-width: 900px; margin: 2em auto; }
+  textarea { width: 100%; box-sizing: border-box; font-family: monospace; }
+  pre { background: #f4f4f4; padding: 1em; overflow: auto; }
+  button, select { font-size: 1em; }
+  #tabs { display: flex; gap: 2px; flex-wrap: wrap; border-bottom: 1px solid #ccc; margin-bottom: 4px; }
+  .tab { padding: 4px 10px; cursor: pointer; background: #eee; border: 1px solid #ccc; border-bottom: none; border-radius: 4px 4px 0 0; user-select: none; }
+  .tab.active { background: #fff; font-weight: bold; margin-bottom: -1px; padding-bottom: 5px; }
+  .tab .close { margin-left: 6px; color: #999; }
+  .tab .close:hover { color: #c00; }
+  .tab.add { background: #f9f9f9; color: #666; }
+  #toolbar { margin: 1em 0; display: flex; gap: 1em; align-items: center; }
+</style>
+</head>
+<body>
+<h1>asl-wasm demo</h1>
+<p>
+  Assemble in the browser, with multi-file support: every tab below is
+  visible to the assembler as a file (names may contain directories, e.g.
+  <code>path/to/file.inc</code>), so <code>include "foo.inc"</code>
+  just works. Runs entirely client-side via WebAssembly.
+</p>
+
+<div id="tabs"></div>
+<textarea id="src" rows="12" spellcheck="false"></textarea>
+<div id="toolbar">
+  <button id="go">assemble</button>
+  <label>main file: <select id="main"></select></label>
+</div>
+<pre id="log"></pre>
+<p id="out"></p>
+
+<script type="module">
+import { assemble, createASL } from '../dist/index.js';
+
+const DEFAULT_FILES = [
+  {
+    name: 'main.asm',
+    content: `        cpu     6809
+        org     $8000
+start:  lda     #$42
+        ldb     #start>>8
+        bra     start
+        end
+`,
+  },
+];
+
+// ---------------------------------------------------------------------------
+// tiny tab-based multi-file editor
+
+const files = DEFAULT_FILES.map((f) => ({ ...f }));
+let active = 0;
+
+const tabsEl = document.getElementById('tabs');
+const srcEl = document.getElementById('src');
+const mainEl = document.getElementById('main');
+
+function sanitizeName(name) {
+  name = (name || '').trim().replace(/\\/g, '/').replace(/^\/+/, '');
+  // keep directory components, drop empty / . / .. segments
+  const parts = name.split('/').filter((p) => p && p !== '.' && p !== '..');
+  return parts.length ? parts.join('/') : null;
+}
+
+function saveCurrent() {
+  if (files[active]) files[active].content = srcEl.value;
+}
+
+function renderTabs() {
+  tabsEl.textContent = '';
+  files.forEach((file, i) => {
+    const tab = document.createElement('span');
+    tab.className = 'tab' + (i === active ? ' active' : '');
+    tab.textContent = file.name;
+    tab.title = 'double-click to rename';
+    tab.addEventListener('click', () => switchTab(i));
+    tab.addEventListener('dblclick', () => {
+      const name = sanitizeName(prompt('rename file:', file.name));
+      if (name) { file.name = name; renderTabs(); }
+    });
+    const close = document.createElement('span');
+    close.className = 'close';
+    close.textContent = '×';
+    close.title = 'close file';
+    close.addEventListener('click', (e) => {
+      e.stopPropagation();
+      files.splice(i, 1);
+      if (active >= files.length) active = files.length - 1;
+      switchTab(active);
+    });
+    tab.appendChild(close);
+    tabsEl.appendChild(tab);
+  });
+  const add = document.createElement('span');
+  add.className = 'tab add';
+  add.textContent = '+';
+  add.title = 'new file';
+  add.addEventListener('click', () => {
+    saveCurrent();
+    const name = sanitizeName(prompt('new file name (may contain directories):', 'path/to/file.inc'));
+    if (!name) return;
+    files.push({ name, content: '' });
+    switchTab(files.length - 1);
+  });
+  tabsEl.appendChild(add);
+
+  const prevMain = mainEl.value;
+  mainEl.textContent = '';
+  for (const file of files) {
+    const opt = document.createElement('option');
+    opt.value = opt.textContent = file.name;
+    mainEl.appendChild(opt);
+  }
+  // keep the previous main file if it still exists, prefer main.asm otherwise
+  if (files.some((f) => f.name === prevMain)) mainEl.value = prevMain;
+  else if (files.some((f) => f.name === 'main.asm')) mainEl.value = 'main.asm';
+}
+
+function switchTab(i) {
+  saveCurrent();
+  active = i;
+  if (files[active]) srcEl.value = files[active].content;
+  else srcEl.value = '';
+  renderTabs();
+}
+
+switchTab(0);
+
+// ---------------------------------------------------------------------------
+// assemble
+
+const log = (line) => {
+  document.getElementById('log').textContent += line + '\n';
+};
+
+document.getElementById('go').addEventListener('click', async () => {
+  saveCurrent();
+  document.getElementById('log').textContent = '';
+  document.getElementById('out').textContent = '';
+
+  if (!files.length) { log('no files'); return; }
+  const main = mainEl.value || files[0].name;
+
+  // every tab becomes a file in the virtual filesystem
+  const inputs = Object.fromEntries(files.map((f) => [f.name, f.content]));
+
+  // run asl
+  const result = await assemble({
+    files: inputs,
+    args: ['-L', `/${main}`],
+    onStdout: log,
+    onStderr: log,
+  });
+  log(`asl exit code: ${result.exitCode}`);
+  const codeFile = result.outputs[`/${main.replace(/\.[^.]*$/, '')}.p`];
+  if (result.exitCode !== 0 || !codeFile) return;
+
+  // convert the code file to a raw binary with p2bin
+  const p2bin = await createASL({ tool: 'p2bin', onStderr: log });
+  p2bin.writeFiles({ 'out.p': codeFile });
+  const run = p2bin.run(['/out.p', '/out.bin']);
+  log(`p2bin exit code: ${run.exitCode}`);
+  const bin = p2bin.readFile('/out.bin');
+  if (!bin) return;
+
+  log(`binary (${bin.length} bytes): ` +
+      [...bin].map((b) => b.toString(16).padStart(2, '0')).join(' '));
+
+  // offer the binary for download
+  const url = URL.createObjectURL(new Blob([bin], { type: 'application/octet-stream' }));
+  document.getElementById('out').innerHTML =
+    `<a href="${url}" download="out.bin">download out.bin</a>`;
+});
+</script>
+</body>
+</html>

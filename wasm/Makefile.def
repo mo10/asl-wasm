@@ -1,0 +1,37 @@
+# -------------------------------------------------------------------------
+# Makefile.def for building AS as WebAssembly via Emscripten.
+#
+# This file is copied to asl-release/Makefile.def by wasm/build.sh (the
+# upstream Makefile includes a file of exactly that name; it is an
+# untracked build artifact, no upstream file is modified).
+#
+# Build-time host tools (rescomp, mkdepend, ...) are built with the
+# native compiler, while the AS binaries themselves are compiled to
+# WebAssembly + JS glue.  Every tool is a MODULARIZE ES module factory
+# with an in-memory filesystem; main() is not invoked automatically.
+
+# ...for host-side build tools:
+
+OBJDIR = obj-host/
+CC = cc
+CFLAGS = -O2
+HOST_OBJEXTENSION = .o
+LD = $(CC)
+LDFLAGS =
+HOST_EXEXTENSION =
+
+# ...for the actual build targets (cross-build to WASM):
+
+TARG_OBJDIR = obj-wasm/
+TARG_CC = emcc
+TARG_CFLAGS = -O2 -include $(CURDIR)/../wasm/compat.h
+TARG_OBJEXTENSION = .o
+TARG_LD = $(TARG_CC)
+TARG_LDFLAGS = -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createASModule -sINVOKE_RUN=0 -sEXIT_RUNTIME=1 -sFORCE_FILESYSTEM=1 -sALLOW_MEMORY_GROWTH=1 -sENVIRONMENT=web,worker,node -sEXPORTED_RUNTIME_METHODS=FS,callMain -sINCOMING_MODULE_JS_API=locateFile,print,printErr,wasmBinary
+TARG_EXEXTENSION = .js
+
+# -------------------------------------------------------------------------
+# directory where binaries, includes, and manpages should go during
+# installation (unused for the WASM build):
+
+INSTROOT:=/usr/local

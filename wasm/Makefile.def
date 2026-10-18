@@ -27,7 +27,11 @@ TARG_CC = emcc
 TARG_CFLAGS = -O2 -include $(CURDIR)/../wasm/compat.h
 TARG_OBJEXTENSION = .o
 TARG_LD = $(TARG_CC)
-TARG_LDFLAGS = -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createASModule -sINVOKE_RUN=0 -sEXIT_RUNTIME=1 -sFORCE_FILESYSTEM=1 -sALLOW_MEMORY_GROWTH=1 -sENVIRONMENT=web,worker,node -sEXPORTED_RUNTIME_METHODS=FS,callMain -sINCOMING_MODULE_JS_API=locateFile,print,printErr,wasmBinary
+# Note: EXIT_RUNTIME is disabled on purpose - after main() exits, AS's
+# atexit handlers / stdio flushing may still call into wasm (observed as
+# "native function `strerror` called after runtime exit"), and we never
+# reuse a module instance anyway, so keeping the runtime alive is free.
+TARG_LDFLAGS = -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createASModule -sINVOKE_RUN=0 -sEXIT_RUNTIME=0 -sFORCE_FILESYSTEM=1 -sALLOW_MEMORY_GROWTH=1 -sENVIRONMENT=web,worker,node -sEXPORTED_RUNTIME_METHODS=FS,callMain -sINCOMING_MODULE_JS_API=locateFile,print,printErr,wasmBinary
 TARG_EXEXTENSION = .js
 
 # -------------------------------------------------------------------------
